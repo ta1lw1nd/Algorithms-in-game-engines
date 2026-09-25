@@ -1,7 +1,7 @@
 [
   {
     "label": "Build & Run",
-    "command": "cmake -B build -G Ninja -DCMAKE_C_COMPILER=C:/w64devkit/bin/gcc.exe -DCMAKE_CXX_COMPILER=C:/w64devkit/bin/g++.exe; cmake --build build; if ($?) { .\\build\\AIGE_pract1.exe }",
+    "command": "cmake -B build -G Ninja -DCMAKE_C_COMPILER=C:/mingw64/bin/gcc.exe -DCMAKE_CXX_COMPILER=C:/mingw64/bin/g++.exe; cmake --build build; if ($?) { .\\build\\AIGE_pract1.exe }",
     "reveal": "always"
   }
 ]

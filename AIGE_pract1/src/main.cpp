@@ -1,7 +1,27 @@
+#include <iterator>
 #include <raylib.h>
 #include <raymath.h>
 #include <input.h>
 #include <vector>
+
+Vector2 moveInput() {
+    Vector2 input = { 0.0f, 0.0f };
+    input.x = IsKeyDown(keyMap.moveRight) - IsKeyDown(keyMap.moveLeft);
+    input.y = IsKeyDown(keyMap.moveDown) - IsKeyDown(keyMap.moveUp);
+    return input;
+}
+
+float GetRandomFloat(float min, float max) {
+    float scale = (float)GetRandomValue(0, 10000) / 10000.0f;
+    return min + scale * (max - min);
+}
+
+
+template <typename T>
+void swap_and_pop(std::vector<T>& vec, int index) {
+    vec[index] = std::move(vec.back());
+    vec.pop_back();
+}
 
 namespace Engine {
     struct Transform {
@@ -19,13 +39,13 @@ namespace Engine {
                 virtual void Update(float deltaTime) = 0;
                 virtual ~GameObject() = default;
 
-                Vector3 GetPosition() const { return transform.position; }
+                Vector3 GetPosition() { return transform.position; }
                 void SetPosition(const Vector3& position) { transform.position = position; }
 
-                Quaternion GetRotation() const { return transform.rotation; }
+                Quaternion GetRotation() { return transform.rotation; }
                 void SetRotation(const Quaternion& rotation) { transform.rotation = rotation; }
 
-                Vector3 GetScale() const { return transform.scale; }
+                Vector3 GetScale() { return transform.scale; }
                 void SetScale(const Vector3& scale) { transform.scale = scale; }
         };
 
@@ -92,9 +112,6 @@ namespace Engine {
             void Update(float deltaTime) override {
             }
 
-            Vector3 GetPosition() {
-                return transform.position;
-            }
     };
 
     class GameCamera {
@@ -145,12 +162,19 @@ namespace Engine {
             float speed;
             Color color;
             Vector3 targetPosition;
+            bool reachedTarget = false;
         public:
-            Enemy(Vector3 spawnPosition, Vector3 targetPosition, float speed, Color color) : speed(speed), color(color), targetPosition(targetPosition) {
-                transform.position = spawnPosition;
+            Enemy() : speed(0.0f), color(WHITE), targetPosition({ 0.0f, 0.0f, 0.0f }) {
 
             }
 
+            void Spawn(Vector3 spawnPosition, Vector3 targetPosition, float speed, Color color) {
+                transform.position = spawnPosition;
+                this->targetPosition = targetPosition;
+                this->speed = speed;
+                this->color = color;
+                this->reachedTarget = false;
+            }
 
             void Draw() override {
                 DrawCube(transform.position, transform.scale.x, transform.scale.y, transform.scale.z, color);
@@ -163,10 +187,20 @@ namespace Engine {
             void MoveTowardsTarget(Vector3 targetPosition, float deltaTime) {
                 Vector3 direction = targetPosition - transform.position;
                 float distance = Vector3Length(direction);
-                if (distance > 0) {
+                if (distance > 0.5f) {
                     Vector3 normalizedDirection = Vector3Normalize(direction);
                     transform.position += normalizedDirection * speed * deltaTime;
+                } else {
+                    reachedTarget = true;
                 }
+            }
+
+            bool HasReachedTarget() const {
+                return reachedTarget;
+            }
+
+            void SetTargetPosition(Vector3 targetPosition) {
+                this->targetPosition = targetPosition;
             }
     };
 
@@ -174,7 +208,8 @@ namespace Engine {
         private:
             Vector3 centerPosition;
             Vector3 targetPosition;
-            std::vector<Enemy> enemies;
+            std::vector<Enemy> pool;
+            size_t activeEnemies;
             float spawnPeriod;
             float spawnTimer;
             int maxEnemies;
@@ -183,51 +218,57 @@ namespace Engine {
             float maxSpeed;
         public:
             EnemyManager(Vector3 centerPosition, Vector3 targetPosition, float spawnPeriod, int maxEnemies, float spawnRadius, float minSpeed, float maxSpeed) : centerPosition(centerPosition), targetPosition(targetPosition), spawnPeriod(spawnPeriod), maxEnemies(maxEnemies), spawnRadius(spawnRadius), minSpeed(minSpeed), maxSpeed(maxSpeed) {
-                enemies.reserve(maxEnemies);
+                pool.resize(maxEnemies);
+                activeEnemies = 0;
                 spawnTimer = 0.0f;
-
-                for (int i = 0; i < maxEnemies; ++i) {
-                    enemies.push_back(Enemy(calculateSpawnPosition(), targetPosition, calculateSpeed(), calculateColor()));
-                }
             }
 
-                Color calculateColor() {
+            Color calculateColor() {
                     return { (unsigned char)GetRandomValue(0, 255), (unsigned char)GetRandomValue(0, 255), (unsigned char)GetRandomValue(0, 255), 255 };
             }
 
             float calculateSpeed() {
-                return GetRandomValue(minSpeed, maxSpeed);
+                return GetRandomFloat(minSpeed, maxSpeed);
             }
 
             Vector3 calculateSpawnPosition() {
-                float angle = GetRandomValue(0, 360);
+                float angle = GetRandomFloat(0, 360) * DEG2RAD;
                 float distance = spawnRadius;
                 return { centerPosition.x + distance * cos(angle), 1.0, centerPosition.z + distance * sin(angle) };
             }
 
+            void SpawnEnemy() {
+                if (activeEnemies < maxEnemies && spawnTimer >= spawnPeriod) {
+                    pool[activeEnemies].Spawn(calculateSpawnPosition(), targetPosition, calculateSpeed(), calculateColor());
+                    activeEnemies++;
+                    spawnTimer = 0.0f;
+                }
+            }
+
             void Update(float deltaTime) {
-                for (Enemy& enemy : enemies) {
-                    enemy.Update(deltaTime);
+                spawnTimer += deltaTime;
+                SpawnEnemy();
+                for(size_t i = 0; i < activeEnemies; i++) {
+                    pool[i].SetTargetPosition(targetPosition);
+                    pool[i].Update(deltaTime);
+
+                    if(pool[i].HasReachedTarget()) {
+                        std::swap(pool[i], pool[activeEnemies - 1]);
+                        activeEnemies--;
+                        i--;
+                    }
                 }
             }
 
             void Draw() {
-                for (Enemy& enemy : enemies) {
-                    enemy.Draw();
+                for(size_t i = 0; i < activeEnemies; i++) {
+                    pool[i].Draw();
                 }
             }
-
     };
+
 }
 
-
-
-Vector2 moveInput() {
-    Vector2 input = { 0.0f, 0.0f };
-    input.x = IsKeyDown(keyMap.moveRight) - IsKeyDown(keyMap.moveLeft);
-    input.y = IsKeyDown(keyMap.moveDown) - IsKeyDown(keyMap.moveUp);
-    return input;
-}
 
 using namespace Engine;
 
@@ -240,12 +281,12 @@ int main() {
     InitWindow(screenWidth, screenHeight, "AIGE_pract1");
     SetTargetFPS(targetFPS);
 
-    GameCamera camera({ 0.0f, 50.0f, 100.0f }, 100.0f);
+    GameCamera camera({ 0.0f, 10.0f, 15.0f }, 100.0f);
 
     Platform platform(100, 100, 1.0f, {150, 150, 150, 255}, {175, 175, 175, 255});
     Target target({ 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, { 1.0f, 2.0f, 1.0f });
 
-    EnemyManager enemyManager({ 0.0f, 0.0f, 0.0f }, target.GetPosition(), 0.1f, 100, 20.0f, 1.0f, 5.0f);
+    EnemyManager enemyManager({ 0.0f, 0.0f, 0.0f }, target.GetPosition(), 1.0f, 100, 20.0f, 1.0f, 5.0f);
 
     while (!WindowShouldClose()) {
         float deltaTime = GetFrameTime();
