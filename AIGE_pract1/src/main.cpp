@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <iterator>
 #include <raylib.h>
 #include <raymath.h>
@@ -16,7 +17,6 @@ float GetRandomFloat(float min, float max) {
     return min + scale * (max - min);
 }
 
-
 template <typename T>
 void swap_and_pop(std::vector<T>& vec, int index) {
     vec[index] = std::move(vec.back());
@@ -24,6 +24,88 @@ void swap_and_pop(std::vector<T>& vec, int index) {
 }
 
 namespace Engine {
+
+    struct LogElement {
+        std::string message;
+        float timeRemaining;
+    };
+
+    class LogManager {
+    private:
+        std::vector<LogElement> log;
+        float logDuration;
+        int fontSize;
+        Color logColor;
+
+    public:
+        LogManager(float duration = 3.0f, int size = 18, Color color = WHITE)
+            : logDuration(duration), fontSize(size), logColor(color) {}
+
+        void AddLog(const std::string& message) {
+            log.push_back({ message, logDuration });
+        }
+
+        void Update(float deltaTime) {
+            for (size_t i = 0; i < log.size();) {
+                log[i].timeRemaining -= deltaTime;
+                if (log[i].timeRemaining <= 0.0f) {
+                    log.erase(log.begin() + i);
+                } else {
+                    ++i;
+                }
+            }
+        }
+
+        void Draw(float startX, float startY, const std::string& title = "EVENT LOG") {
+            if (log.empty()) return;
+
+            float padding = 12.0f;
+            float lineSpacing = 6.0f;
+            float titleFontSize = fontSize + 4.0f;
+            float headerHeight = titleFontSize + 10.0f;
+
+            float maxTextWidth = MeasureText(title.c_str(), titleFontSize);
+
+            for (const auto& elem : log) {
+                float textWidth = MeasureText(elem.message.c_str(), fontSize);
+                if (textWidth > maxTextWidth) {
+                    maxTextWidth = textWidth;
+                }
+            }
+
+            float panelWidth = maxTextWidth + (padding * 2.0f);
+            float lineHeight = fontSize + lineSpacing;
+            float panelHeight = padding + headerHeight + (log.size() * lineHeight) + padding;
+
+            Rectangle panelRect = { startX, startY, panelWidth, panelHeight };
+
+            DrawRectangleRec(panelRect, ColorAlpha(DARKGRAY, 0.85f));
+            DrawRectangle((int)startX, (int)startY, (int)panelWidth, (int)(headerHeight + padding / 2), ColorAlpha(BLACK, 0.4f));
+            DrawRectangleLinesEx(panelRect, 2.0f, ColorAlpha(WHITE, 0.8f));
+
+            DrawText(title.c_str(), (int)(startX + padding), (int)(startY + padding / 2), (int)titleFontSize, WHITE);
+
+            float lineY = startY + headerHeight + 2.0f;
+            DrawLineEx({ startX + padding / 2, lineY }, { startX + panelWidth - padding / 2, lineY }, 1.5f, ColorAlpha(WHITE, 0.5f));
+
+            float currentY = lineY + padding;
+            for (size_t i = 0; i < log.size(); ++i) {
+                float alpha = log[i].timeRemaining / logDuration;
+                if (alpha > 1.0f) alpha = 1.0f;
+
+                Color textColor = ColorAlpha(logColor, alpha);
+
+                DrawText(log[i].message.c_str(), (int)(startX + padding), (int)currentY, fontSize, textColor);
+
+                currentY += lineHeight;
+            }
+        }
+
+        void Clear() {
+            log.clear();
+        }
+    };
+
     struct Transform {
         Vector3 position = { 0.0f, 0.0f, 0.0f };
         Quaternion rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -128,10 +210,10 @@ namespace Engine {
                 camera.projection = CAMERA_PERSPECTIVE;
             }
 
-            void Update(Vector2 moveInput, float deltaTime) {
+            void Update(Vector2 moveInput, float deltaTime, LogManager& eventLog) {
                 MoveCamera(moveInput, deltaTime);
                 if(IsKeyPressed(keyMap.cameraResetPosition)) {
-                    Reset();
+                    Reset(eventLog);
                 }
             }
 
@@ -143,7 +225,8 @@ namespace Engine {
                 camera.target.z = camera.position.z - initialPosition.z;
             }
 
-            void Reset() {
+            void Reset(LogManager& eventLog) {
+                eventLog.AddLog("Camera reset");
                 camera.position = initialPosition;
                 camera.target = { 0.0f, 0.0f, 0.0f };
             }
@@ -168,8 +251,11 @@ namespace Engine {
 
             }
 
-            void Spawn(Vector3 spawnPosition, Vector3 targetPosition, float speed, Color color) {
+            void Spawn(Vector3 spawnPosition, Vector3 targetPosition, Quaternion rotation, Vector3 scale, float speed, Color color, LogManager& eventLog) {
+                eventLog.AddLog("Enemy spawned");
                 transform.position = spawnPosition;
+                transform.rotation = rotation;
+                transform.scale = scale;
                 this->targetPosition = targetPosition;
                 this->speed = speed;
                 this->color = color;
@@ -212,7 +298,7 @@ namespace Engine {
             size_t activeEnemies;
             float spawnPeriod;
             float spawnTimer;
-            int maxEnemies;
+            size_t maxEnemies;
             float spawnRadius;
             float minSpeed;
             float maxSpeed;
@@ -237,22 +323,23 @@ namespace Engine {
                 return { centerPosition.x + distance * cos(angle), 1.0, centerPosition.z + distance * sin(angle) };
             }
 
-            void SpawnEnemy() {
+            void SpawnEnemy(LogManager& eventLog) {
                 if (activeEnemies < maxEnemies && spawnTimer >= spawnPeriod) {
-                    pool[activeEnemies].Spawn(calculateSpawnPosition(), targetPosition, calculateSpeed(), calculateColor());
+                    pool[activeEnemies].Spawn(calculateSpawnPosition(), targetPosition, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, calculateSpeed(), calculateColor(), eventLog);
                     activeEnemies++;
                     spawnTimer = 0.0f;
                 }
             }
 
-            void Update(float deltaTime) {
+            void Update(float deltaTime, LogManager& eventLog) {
                 spawnTimer += deltaTime;
-                SpawnEnemy();
+                SpawnEnemy(eventLog);
                 for(size_t i = 0; i < activeEnemies; i++) {
-                    pool[i].SetTargetPosition(targetPosition);
+                    pool[i].    SetTargetPosition(targetPosition);
                     pool[i].Update(deltaTime);
 
                     if(pool[i].HasReachedTarget()) {
+                        eventLog.AddLog("Enemy reached target");
                         std::swap(pool[i], pool[activeEnemies - 1]);
                         activeEnemies--;
                         i--;
@@ -273,29 +360,44 @@ namespace Engine {
 using namespace Engine;
 
 int main() {
+    LogManager eventLog(3.0f);
+    bool toDrawLog = true;
     //Setup settings
     const unsigned int screenWidth = 1600;
     const unsigned int screenHeight = 900;
     int targetFPS = 180;
-
     InitWindow(screenWidth, screenHeight, "AIGE_pract1");
     SetTargetFPS(targetFPS);
+
+    eventLog.AddLog("Game window initialized successfully");
+
+
+
+
+
 
     GameCamera camera({ 0.0f, 10.0f, 15.0f }, 100.0f);
 
     Platform platform(100, 100, 1.0f, {150, 150, 150, 255}, {175, 175, 175, 255});
     Target target({ 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, { 1.0f, 2.0f, 1.0f });
 
-    EnemyManager enemyManager({ 0.0f, 0.0f, 0.0f }, target.GetPosition(), 1.0f, 100, 20.0f, 1.0f, 5.0f);
+    EnemyManager enemyManager({ 0.0f, 0.0f, 0.0f }, target.GetPosition(), 1.5f, 100, 20.0f, 1.0f, 5.0f);
+
+
 
     while (!WindowShouldClose()) {
         float deltaTime = GetFrameTime();
-        enemyManager.Update(deltaTime);
+        if (IsKeyPressed(keyMap.debugLogToggle)) {
+            toDrawLog = !toDrawLog;
+        }
+        enemyManager.Update(deltaTime, eventLog);
+        eventLog.Update(deltaTime);
+
 
         BeginDrawing();
         ClearBackground({40, 50, 70, 255});
         camera.Begin3D();
-        camera.Update(moveInput(), deltaTime);
+        camera.Update(moveInput(), deltaTime, eventLog);
 
         enemyManager.Draw();
 
@@ -304,6 +406,7 @@ int main() {
 
 
         camera.End3D();
+        if (toDrawLog) eventLog.Draw(15.0f, 15.0f, "SYSTEM LOG");
         EndDrawing();
     }
 

@@ -2,7 +2,7 @@
 #include "raylib.h"
 
 struct KeyBindings{
-    KeyboardKey debugToggle;
+    KeyboardKey debugLogToggle;
     KeyboardKey fullscreenToggle;
     KeyboardKey cameraResetPosition;
     KeyboardKey moveLeft;
