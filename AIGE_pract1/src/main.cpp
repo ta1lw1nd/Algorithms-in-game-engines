@@ -3,7 +3,10 @@
 #include <raylib.h>
 #include <raymath.h>
 #include <input.h>
+#include <chrono>
+#include <string>
 #include <vector>
+#include <utility>
 
 Vector2 moveInput() {
     Vector2 input = { 0.0f, 0.0f };
@@ -24,6 +27,141 @@ void swap_and_pop(std::vector<T>& vec, int index) {
 }
 
 namespace Engine {
+    struct ProfileData {
+            std::string name;
+            std::string category;
+            float duration;
+            int depth;
+            std::vector<int> children;
+        };
+
+    class Profiler {
+        private:
+            inline static std::vector<ProfileData> profileData;
+            inline static std::vector<ProfileData> displayData;
+            inline static std::vector<int> activeMarkers;
+
+        public:
+            static void BeginFrame() {
+                displayData = std::move(profileData);
+                profileData.clear();
+                activeMarkers.clear();
+            }
+
+            static int BeginMarker(const std::string& name, const std::string& category) {
+                int index = static_cast<int>(profileData.size());
+
+                ProfileData data;
+                data.name = name;
+                data.category = category;
+                data.duration = 0.0f;
+                data.depth = static_cast<int>(activeMarkers.size());
+
+                if (!activeMarkers.empty()) {
+                    profileData[activeMarkers.back()].children.push_back(index);
+                }
+
+                profileData.push_back(data);
+                activeMarkers.push_back(index);
+
+                return index;
+            }
+
+            static void EndMarker(int index, float duration) {
+                if (!activeMarkers.empty()) {
+                    profileData[index].duration = duration;
+                    activeMarkers.pop_back();
+                }
+            }
+
+            static const std::vector<ProfileData>& GetProfileData() {
+                return profileData;
+            }
+
+            static void Draw(float endX, float startY, const std::string& title = "PROFILER") {
+                if (displayData.empty()) return;
+
+                float frameDuration = displayData[0].duration;
+
+                float padding = 12.0f;
+                float lineSpacing = 6.0f;
+                int fontSize = 18;
+                float titleFontSize = fontSize + 4.0f;
+                float headerHeight = titleFontSize + 10.0f;
+                float indentSize = 14.0f;
+                float columnGap = 20.0f;
+
+                std::string fpsText = TextFormat("%d FPS", GetFPS());
+                float titleWidth = MeasureText(title.c_str(), titleFontSize);
+                float fpsWidth = MeasureText(fpsText.c_str(), fontSize);
+
+                float maxNameWidth = titleWidth + columnGap + fpsWidth;
+                float maxTimeWidth = 0.0f;
+                float maxPercentWidth = 0.0f;
+
+                for (const auto& data : displayData) {
+                    float nameWidth = MeasureText(data.name.c_str(), fontSize) + data.depth * indentSize;
+                    if (nameWidth > maxNameWidth) maxNameWidth = nameWidth;
+
+                    float timeWidth = MeasureText(TextFormat("%.1f ms", data.duration), fontSize);
+                    if (timeWidth > maxTimeWidth) maxTimeWidth = timeWidth;
+
+                    float percent = frameDuration > 0.0f ? (data.duration / frameDuration) * 100.0f : 0.0f;
+                    float percentWidth = MeasureText(TextFormat("%.0f%%", percent), fontSize);
+                    if (percentWidth > maxPercentWidth) maxPercentWidth = percentWidth;
+                }
+
+                float panelWidth = padding + maxNameWidth + columnGap + maxTimeWidth + columnGap + maxPercentWidth + padding;
+                float startX = endX - panelWidth;
+                float lineHeight = fontSize + lineSpacing;
+                float panelHeight = padding + headerHeight + (displayData.size() * lineHeight) + padding;
+
+                Rectangle panelRect = { startX, startY, panelWidth, panelHeight };
+
+                DrawRectangleRec(panelRect, ColorAlpha(DARKGRAY, 0.85f));
+                DrawRectangle((int)startX, (int)startY, (int)panelWidth, (int)(headerHeight + padding / 2), ColorAlpha(BLACK, 0.4f));
+                DrawRectangleLinesEx(panelRect, 2.0f, ColorAlpha(WHITE, 0.8f));
+
+                DrawText(title.c_str(), (int)(startX + padding), (int)(startY + padding / 2), (int)titleFontSize, WHITE);
+                DrawText(fpsText.c_str(), (int)(startX + panelWidth - padding - fpsWidth), (int)(startY + padding / 2), fontSize, WHITE);
+
+                float lineY = startY + headerHeight + 2.0f;
+                DrawLineEx({ startX + padding / 2, lineY }, { startX + panelWidth - padding / 2, lineY }, 1.5f, ColorAlpha(WHITE, 0.5f));
+
+                float timeColumnX = startX + padding + maxNameWidth + columnGap;
+                float percentColumnX = timeColumnX + maxTimeWidth + columnGap;
+                float currentY = lineY + padding;
+
+                for (const auto& data : displayData) {
+                    float nameX = startX + padding + data.depth * indentSize;
+                    float percent = frameDuration > 0.0f ? (data.duration / frameDuration) * 100.0f : 0.0f;
+
+                    DrawText(data.name.c_str(), (int)nameX, (int)currentY, fontSize, WHITE);
+                    DrawText(TextFormat("%.1f ms", data.duration), (int)timeColumnX, (int)currentY, fontSize, WHITE);
+                    DrawText(TextFormat("%.0f%%", percent), (int)percentColumnX, (int)currentY, fontSize, WHITE);
+
+                    currentY += lineHeight;
+                }
+            }
+        };
+
+        class ScopeMarker {
+            private:
+                std::chrono::high_resolution_clock::time_point startTime;
+                int markerIndex;
+
+            public:
+                ScopeMarker(const std::string& name, const std::string& category) {
+                    startTime = std::chrono::high_resolution_clock::now();
+                    markerIndex = Profiler::BeginMarker(name, category);
+                }
+
+                ~ScopeMarker() {
+                    auto endTime = std::chrono::high_resolution_clock::now();
+                    float duration = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+                    Profiler::EndMarker(markerIndex, duration);
+                }
+        };
 
     struct LogElement {
         std::string message;
@@ -335,7 +473,7 @@ namespace Engine {
                 spawnTimer += deltaTime;
                 SpawnEnemy(eventLog);
                 for(size_t i = 0; i < activeEnemies; i++) {
-                    pool[i].    SetTargetPosition(targetPosition);
+                    pool[i].SetTargetPosition(targetPosition);
                     pool[i].Update(deltaTime);
 
                     if(pool[i].HasReachedTarget()) {
@@ -365,49 +503,69 @@ int main() {
     //Setup settings
     const unsigned int screenWidth = 1600;
     const unsigned int screenHeight = 900;
-    int targetFPS = 180;
+    int targetFPS = 5000;
     InitWindow(screenWidth, screenHeight, "AIGE_pract1");
     SetTargetFPS(targetFPS);
 
     eventLog.AddLog("Game window initialized successfully");
-
-
-
-
-
 
     GameCamera camera({ 0.0f, 10.0f, 15.0f }, 100.0f);
 
     Platform platform(100, 100, 1.0f, {150, 150, 150, 255}, {175, 175, 175, 255});
     Target target({ 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, { 1.0f, 2.0f, 1.0f });
 
-    EnemyManager enemyManager({ 0.0f, 0.0f, 0.0f }, target.GetPosition(), 1.5f, 100, 20.0f, 1.0f, 5.0f);
-
-
+    EnemyManager enemyManager({ 0.0f, 0.0f, 0.0f }, target.GetPosition(), 0.1f, 100, 20.0f, 1.0f, 5.0f);
 
     while (!WindowShouldClose()) {
+        Profiler::BeginFrame();
+        ScopeMarker frameMarker("Frame", "Frame");
+
         float deltaTime = GetFrameTime();
         if (IsKeyPressed(keyMap.debugLogToggle)) {
             toDrawLog = !toDrawLog;
         }
-        enemyManager.Update(deltaTime, eventLog);
-        eventLog.Update(deltaTime);
 
+        {
+            ScopeMarker marker("Enemies", "Update");
+            enemyManager.Update(deltaTime, eventLog);
+        }
+        eventLog.Update(deltaTime);
 
         BeginDrawing();
         ClearBackground({40, 50, 70, 255});
         camera.Begin3D();
-        camera.Update(moveInput(), deltaTime, eventLog);
 
-        enemyManager.Draw();
+        {
+            ScopeMarker marker("Camera", "Update");
+            camera.Update(moveInput(), deltaTime, eventLog);
+        }
 
-        platform.Draw();
-        target.Draw();
+        {
+            ScopeMarker marker("Draw", "Render");
 
+            {
+                ScopeMarker subMarker("Enemies", "Render");
+                enemyManager.Draw();
+            }
+            {
+                ScopeMarker subMarker("Platform", "Render");
+                platform.Draw();
+            }
+            {
+                ScopeMarker subMarker("Target", "Render");
+                target.Draw();
+            }
+        }
 
         camera.End3D();
+        //DrawText(TextFormat("FPS: %d", GetFPS()), screenWidth / 2, 5, 18, WHITE);
         if (toDrawLog) eventLog.Draw(15.0f, 15.0f, "SYSTEM LOG");
-        EndDrawing();
+        Profiler::Draw(screenWidth - 15.0f, 15.0f, "PROFILER");
+
+        {
+            ScopeMarker marker("End Drawing", "Render");
+            EndDrawing();
+        }
     }
 
     return 0;
