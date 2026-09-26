@@ -3,6 +3,7 @@
 
 struct KeyBindings{
     KeyboardKey debugLogToggle;
+    KeyboardKey debugScopeMarkerToggle;
     KeyboardKey fullscreenToggle;
     KeyboardKey cameraResetPosition;
     KeyboardKey moveLeft;
